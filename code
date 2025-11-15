@@ -1,0 +1,76 @@
+import pyreadstat
+import pandas as pd
+from pathlib import Path
+import os
+
+RAW = Path("C:/Users/Art/Desktop/Masterarbeit/data/dataoriginal")
+OUT = Path("C:/Users/Art/Desktop/Masterarbeit/data/parquet")
+OUT.mkdir(parents=True, exist_ok=True)
+
+files = {
+    "biobirth": RAW / "biobirth.dta",
+    "pgen":     RAW / "pgen.dta",
+    "pl":       RAW / "pl.dta",
+}
+
+def dta_to_parquet(dta_path: Path, out_path: Path, usecols=None):
+    # 1) .dta lesen (Roh-Codes behalten; Labels kommen über meta)
+    df, meta = pyreadstat.read_dta(
+        dta_path,
+        usecols=usecols,
+        apply_value_formats=False  # wichtig für stabile Codes/Joins
+    )
+    # 2) Spaltennamen säubern (empfohlen)
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+
+    # 3) Speicher schonen (optional, aber sinnvoll)
+    for c in df.select_dtypes(include="float64").columns:
+        df[c] = df[c].astype("float32")
+
+    # 4) Parquet schreiben (snappy-Kompression)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(out_path, index=False)
+
+    # 5) Rückgabe: Form + ggf. Metadaten für spätere Label-Mappings
+    return df.shape, meta
+
+for name, src in files.items():
+    shape, meta = dta_to_parquet(src, OUT / f"{name}.parquet")
+    print(f"{name}: {shape}")
+
+  
+import pyreadstat
+import pandas as pd
+from pathlib import Path
+
+RAW = Path("C:/Users/Art/Desktop/Masterarbeit/data/dataoriginal")
+OUT = Path("C:/Users/Art/Desktop/Masterarbeit/data/parquet"); OUT.mkdir(exist_ok=True)
+
+
+usecols_biobirth = ["pid","sex",           # Keys
+               ]
+
+
+usecols_pgen = ["pid","syear","pgautono","pgbetr",          # Keys
+                # Outcomes
+                # "jobsat_var", "lifesat_var",
+                # Main IV
+                # "autonomy_var",
+                # Controls
+                # "income_var","hours_var","health_var","firm_size_var","temp_contract_var","lead_var"
+               ]
+
+usecols_pl   = ["pid","syear","plh0173","plh0182","plc0013_h","plb0186_h","plh0171", "plb0037_h","plb0067"           # Keys
+                # ggf. ergänzende Kontrollen aus pl.*
+               ]
+
+def dta_to_parquet(path, out, usecols=None):
+    df, meta = pyreadstat.read_dta(path, usecols=usecols, apply_value_formats=False)
+    df.columns = [str(c).strip().lower().replace(" ","_") for c in df.columns]
+    df.to_parquet(out, index=False)
+    return df.shape
+
+shape_biobirth = dta_to_parquet(RAW/"biobirth.dta", OUT/"biobirth.parquet", usecols=usecols_biobirth or None)
+shape_pgen = dta_to_parquet(RAW/"pgen.dta", OUT/"pgen.parquet", usecols=usecols_pgen or None)
+shape_pl   = dta_to_parquet(RAW/"pl.dta",   OUT/"pl.parquet",   usecols=usecols_pl   or None)
+print("biobirth:", shape_biobirth, "pgen:", shape_pgen, "pl:", shape_pl)
