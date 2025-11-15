@@ -38,7 +38,9 @@ for name, src in files.items():
     shape, meta = dta_to_parquet(src, OUT / f"{name}.parquet")
     print(f"{name}: {shape}")
 
-  
+
+
+
 import pyreadstat
 import pandas as pd
 from pathlib import Path
@@ -74,3 +76,552 @@ shape_biobirth = dta_to_parquet(RAW/"biobirth.dta", OUT/"biobirth.parquet", usec
 shape_pgen = dta_to_parquet(RAW/"pgen.dta", OUT/"pgen.parquet", usecols=usecols_pgen or None)
 shape_pl   = dta_to_parquet(RAW/"pl.dta",   OUT/"pl.parquet",   usecols=usecols_pl   or None)
 print("biobirth:", shape_biobirth, "pgen:", shape_pgen, "pl:", shape_pl)
+
+
+
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+# --- Pfade/Settings ---
+BASE = Path("C:/Users/Art/Desktop/Masterarbeit/data")
+PARQ = BASE / "parquet"
+PROC = BASE / "processed"
+PROC.mkdir(parents=True, exist_ok=True)
+
+YEARS = list(range(2013, 2020))  # 2013–2019 inkl.
+N_YEARS = len(YEARS)
+MIN_YEARS_REQUIRED = N_YEARS - 3  # max. 3 fehlend -> mind. 4 valide Jahre
+
+# Variablen (deine Bezeichnungen)
+PGEN_VARS = ["pid","syear","pgautono","pgbetr"]
+PL_VARS   = ["pid","syear","plh0173","plh0182","plc0013_h","plb0186_h","plh0171","plb0037_h","plb0067"]
+BIO_VARS  = ["pid","sex"]
+
+# --- 1) Laden ---
+pgen = pd.read_parquet(PARQ / "pgen.parquet", columns=PGEN_VARS)
+pl   = pd.read_parquet(PARQ / "pl.parquet",   columns=PL_VARS)
+bio  = pd.read_parquet(PARQ / "biobirth.parquet", columns=BIO_VARS)
+
+# --- 2) Jahre filtern & Deduplizieren ---
+pgen = pgen[pgen["syear"].isin(YEARS)].copy().sort_values(["pid","syear"]).drop_duplicates(["pid","syear"])
+pl   = pl[pl["syear"].isin(YEARS)].copy().sort_values(["pid","syear"]).drop_duplicates(["pid","syear"])
+
+# --- 3) Geschlecht filtern: nur PIDs mit vorhandenem sex in biobirth ---
+bio = bio.copy()
+# SOEP-Missings (<0) -> NaN
+if "sex" in bio.columns:
+    bio.loc[bio["sex"].lt(0), "sex"] = np.nan
+pid_with_sex = set(bio.loc[bio["sex"].notna(), "pid"].unique())
+
+# PIDs, die sowohl in pgen als auch pl vorkommen UND sex haben (auf Personenebene)
+pid_in_pgen = set(pgen["pid"].unique())
+pid_in_pl   = set(pl["pid"].unique())
+pid_keep_initial = (pid_in_pgen & pid_in_pl) & pid_with_sex
+
+pgen = pgen[pgen["pid"].isin(pid_keep_initial)].copy()
+pl   = pl[pl["pid"].isin(pid_keep_initial)].copy()
+bio  = bio[bio["pid"].isin(pid_keep_initial)].copy()
+
+# --- 4) Merge pgen ⟂ pl (inner auf pid, syear), dann bio (left auf pid) ---
+df = pgen.merge(pl, on=["pid","syear"], how="inner", suffixes=("","_pl"))
+df = df.merge(bio, on="pid", how="left")
+
+# --- 5) SOEP-Missings <0 -> NaN auf allen relevanten Variablen ---
+relevant_all = ["pgautono","pgbetr","plh0173","plh0182","plc0013_h","plb0186_h","plh0171","plb0037_h","plb0067","sex"]
+for c in relevant_all:
+    if c in df.columns:
+        df.loc[df[c].lt(0), c] = np.nan
+
+# --- 6) Kern-Variablen definieren (Zählregel für ≥4 valide Jahre pro PID) ---
+core_vars = ["plh0173","plh0182","pgautono","plc0013_h","plb0186_h","plh0171"]
+
+# Maske: Jahr gilt als "valide Kern-Beobachtung", wenn alle core_vars nicht fehlen
+core_mask = df[core_vars].notna().all(axis=1)
+# Anzahl valider Kern-Jahre pro PID
+core_years_per_pid = df.loc[core_mask].groupby("pid")["syear"].nunique()
+pid_core_ok = set(core_years_per_pid[core_years_per_pid >= MIN_YEARS_REQUIRED].index)
+
+# Finaler PID-Filter: muss (i) in beiden Quellen sein, (ii) sex haben, (iii) Kernregel erfüllen
+pid_final = pid_core_ok
+df = df[df["pid"].isin(pid_final)].copy()
+
+# --- 7) Zeilen für Modellzwecke: pro Jahr Kernvariablen vollständig ---
+# (Für FE-Regression werden Zeilen mit fehlenden Kernvariablen ohnehin gedroppt.)
+df = df[df[core_vars].notna().all(axis=1)].copy()
+
+# --- 8) Typen & Skalierung ---
+# Zufriedenheiten 0–10
+for c in ["plh0173","plh0182"]:
+    df[c] = pd.to_numeric(df[c], errors="coerce").astype("float32")
+
+# Autonomie (typ. 1–4 Likert)
+df["pgautono"] = pd.to_numeric(df["pgautono"], errors="coerce").astype("float32")
+df["pgautono_norm01"] = (df["pgautono"] - df["pgautono"].min()) / (df["pgautono"].max() - df["pgautono"].min())
+
+# Einkommen/Arbeitszeit
+for c in ["plc0013_h","plb0186_h"]:
+    df[c] = pd.to_numeric(df[c], errors="coerce").astype("float32")
+
+# Gesundheit ordinal
+df["plh0171"] = pd.to_numeric(df["plh0171"], errors="coerce").astype("float32")
+
+# Firmengröße: Kategorie (später ggf. dummifizieren in der Regression)
+if "pgbetr" in df.columns:
+    df["pgbetr"] = df["pgbetr"].astype("category")
+
+# --- 9) Vertrag & Führung: binär + Missing-Indicators ---
+# plb0037_h: 1=permanent, 2=temporary, 3=not employed, 4=self employed
+df["temp_contract_raw"] = df["plb0037_h"]
+df["temp_contract_miss"] = df["temp_contract_raw"].isna().astype("float32")
+df["temp_contract"] = np.where(df["temp_contract_raw"] == 2, 1.0,
+                        np.where(df["temp_contract_raw"] == 1, 0.0, np.nan)).astype("float32")
+# Für Modellzwecke Missing -> 0 + Indicator behalten
+df["temp_contract"] = df["temp_contract"].fillna(0.0).astype("float32")
+
+# plb0067: 1=yes, 2=no
+df["lead_raw"] = df["plb0067"]
+df["lead_miss"] = df["lead_raw"].isna().astype("float32")
+df["lead"] = np.where(df["lead_raw"] == 1, 1.0,
+               np.where(df["lead_raw"] == 2, 0.0, np.nan)).astype("float32")
+df["lead"] = df["lead"].fillna(0.0).astype("float32")
+
+# Geschlecht: female Dummy (1=weiblich) – nur deskriptiv/Subgruppen (FE ignoriert Zeitinvariantes)
+df["female"] = (df["sex"] == 2).astype("float32")
+
+# --- 10) Final aufräumen & Checks ---
+df = df.sort_values(["pid","syear"]).drop_duplicates(["pid","syear"], keep="first")
+
+print("Form nach Kern-Filter & Cleaning:", df.shape)
+print("Anzahl PIDs:", df["pid"].nunique(), "– Jahre:", df["syear"].nunique(), f"({YEARS[0]}–{YEARS[-1]})")
+
+# Coverage-Report: wie viele Kern-Jahre je PID im finalen Datensatz?
+final_year_counts = df.groupby("pid")["syear"].nunique()
+print("Verteilung gültiger Jahre pro PID (final):")
+print(final_year_counts.value_counts().sort_index())
+
+# Variation in Autonomie (für FE wichtig)
+var_share = (df.groupby("pid")["pgautono"].nunique() > 1).mean()
+print(f"Anteil Personen mit Variation in pgautono über die Zeit: {var_share:.2%}")
+
+# --- 11) Speichern ---
+out_path = PROC / "panel_coremin4yrs_pgen_pl_2013_2019_with_sex.parquet"
+df.to_parquet(out_path, index=False)
+print("Gespeichert:", out_path)
+
+
+import pandas as pd
+from pathlib import Path
+
+# Pfad
+PROC = Path("C:/Users/Art/Desktop/Masterarbeit/data/processed")
+
+# Laden des finalen Panels
+df = pd.read_parquet(PROC / "panel_coremin4yrs_clean_domains_2013_2019.parquet")
+
+# Erste 5 Zeilen
+print(df.head())
+
+# Struktur-Check
+print(df.info())
+
+# Überblick über Spaltennamen
+print(df.columns.tolist())
+
+(df.groupby("pid")["pgautono"].nunique() > 1).mean()
+
+dups = df.duplicated(subset=["pid","syear"]).sum()
+print("Duplicates pid×syear:", dups)
+
+import pandas as pd
+
+# --- 0) Setup: Kernvariablen definieren ---
+core = ["plh0173","plh0182","pgautono","plc0013_h","plb0186_h","plh0171"]
+
+print("=== PANEL SANITY CHECKS (ESSENTIAL) ===")
+
+# 1) Eindeutiger Key (1 Zeile pro Person×Jahr)
+dups = df.duplicated(subset=["pid","syear"]).sum()
+print(f"[1] Duplicates pid×syear: {dups}")
+
+# 2) Panel-Deckung (≥2 Jahre pro Person)
+years_per_pid = df.groupby("pid")["syear"].nunique()
+share_ge2 = (years_per_pid >= 2).mean()
+print(f"[2] Share of persons with ≥2 years: {share_ge2:.2%}")
+print("    Years/person distribution:\n", years_per_pid.value_counts().sort_index().to_string())
+
+# 3) Within-Variation (DV & Haupt-IV)
+share_aut = (df.groupby("pid")["pgautono"].nunique() > 1).mean()
+share_js  = (df.groupby("pid")["plh0173"].nunique() > 1).mean()
+print(f"[3] Within-variation – Autonomy: {share_aut:.2%} | Job satisfaction: {share_js:.2%}")
+
+# 4) Missingness (Kernvariablen)
+miss = (df[core].isna().mean()*100).round(2).sort_values(ascending=False)
+print("[4] Missingness in core variables (%):\n", miss.to_string())
+
+# 5) Plausibilitäten/Ausreißer – Income & Hours
+for c in ["plc0013_h","plb0186_h"]:
+    desc = df[c].describe(percentiles=[.01,.05,.95,.99]).round(2)
+    print(f"[5] {c} – percentiles & summary:\n{desc.to_string()}")
+
+# 6) Schnelle Trends & Abdeckung pro Jahr
+yr_means = df.groupby("syear")[["pgautono","plh0173"]].mean().round(2)
+yr_n = df.groupby("syear")["pid"].nunique()
+print("[6] Yearly means (Autonomy, JobSat):\n", yr_means.to_string())
+print("[6] Persons per year:\n", yr_n.to_string())
+print("=== END CHECKS ===")
+
+
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# -------------------------
+# 1. Linienplot: Job Satisfaction & Autonomy über die Jahre
+# -------------------------
+trend = df.groupby("syear")[["plh0173", "pgautono"]].mean()
+
+plt.figure(figsize=(8,5))
+plt.plot(trend.index, trend["plh0173"], marker="o", label="Job Satisfaction (0–10)")
+plt.plot(trend.index, trend["pgautono"], marker="o", label="Job Autonomy (0–5)")
+plt.title("Average Job Satisfaction and Autonomy per Year")
+plt.xlabel("Year")
+plt.ylabel("Mean Value")
+plt.legend()
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+# -------------------------
+# 2. Balkendiagramm: Anteil Frauen/Männer pro Jahr
+# -------------------------
+gender_dist = (
+    df.groupby(["syear", "female"]).size()
+    .groupby(level=0)
+    .apply(lambda x: x / x.sum() * 100)
+    .unstack(fill_value=0)
+)
+
+gender_dist.plot(kind="bar", stacked=True, figsize=(8,5), color=["#1f77b4", "#ff7f0e"])
+plt.title("Gender Distribution per Year (%)")
+plt.xlabel("Year")
+plt.ylabel("Percentage")
+plt.legend(["Male (0)", "Female (1)"])
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+# -------------------------
+# 3. Stacked Bars: Temporäre vs. permanente Verträge pro Jahr
+# -------------------------
+temp_dist = (
+    df[df["temp_contract"].notna()]
+    .groupby(["syear", "temp_contract"]).size()
+    .groupby(level=0)
+    .apply(lambda x: x / x.sum() * 100)
+    .unstack(fill_value=0)
+)
+
+temp_dist.plot(kind="bar", stacked=True, figsize=(8,5), color=["#2ca02c", "#d62728"])
+plt.title("Contract Types per Year (%)")
+plt.xlabel("Year")
+plt.ylabel("Percentage")
+plt.legend(["Permanent (0)", "Temporary (1)"])
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+# -------------------------
+# 4. Korrelationsmatrix: Kernvariablen
+# -------------------------
+corr_vars = ["plh0173", "plh0182", "pgautono", "plc0013_h", "plb0186_h", "plh0171"]
+corr = df[corr_vars].corr().round(2)
+print("\nCorrelation matrix:\n", corr)
+
+# -------------------------
+# 5. Mittelwerte nach Geschlecht
+# -------------------------
+gender_means = df.groupby(["syear", "female"])[["plh0173", "pgautono"]].mean().round(2)
+print("\nMean Job Satisfaction and Autonomy by Gender per Year:\n", gender_means)
+
+# -------------------------
+# 6. Boxplots für Einkommen und Arbeitsstunden
+# -------------------------
+plt.figure(figsize=(10,5))
+df.boxplot(column="plc0013_h", by="syear")
+plt.title("Gross Monthly Income by Year")
+plt.suptitle("")
+plt.ylabel("EUR")
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+plt.figure(figsize=(10,5))
+df.boxplot(column="plb0186_h", by="syear")
+plt.title("Weekly Working Hours by Year")
+plt.suptitle("")
+plt.ylabel("Hours")
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from linearmodels.panel import PanelOLS
+
+# Pfade & Laden
+PROC = Path("C:/Users/Art/Desktop/Masterarbeit/data/processed")
+df = pd.read_parquet(PROC / "cleaned_panel.parquet")
+
+# Grundchecks (knapp)
+print(df.shape, df.columns.tolist()[:12])
+print(df[["pid","syear"]].drop_duplicates().shape)
+
+# Panelindex setzen
+df = df.set_index(["pid","syear"]).sort_index()
+
+
+# Baseline-Kontrollen: Einkommen, Stunden, Gesundheit
+formula_base = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + EntityEffects + TimeEffects"
+
+mod_base = PanelOLS.from_formula(formula_base, data=df)
+res_base = mod_base.fit(cov_type="clustered", cluster_entity=True)
+
+print(res_base.summary)
+
+
+# Firmengröße als kategoriale Regressoren
+# (linearmodels-Formel: C(pgbetr) erzeugt Dummies; fehlende bleiben außen vor)
+formula_ext = (
+    "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 "
+    "+ temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) "
+    "+ EntityEffects + TimeEffects"
+)
+
+mod_ext = PanelOLS.from_formula(formula_ext, data=df)
+res_ext = mod_ext.fit(cov_type="clustered", cluster_entity=True)
+print(res_ext.summary)
+
+
+# Firmengröße als kategoriale Regressoren
+# (linearmodels-Formel: C(pgbetr) erzeugt Dummies; fehlende bleiben außen vor)
+formula_ext = (
+    "plh0182 ~ pgautono + plc0013_h + plb0186_h + plh0171 "
+    "+ temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) "
+    "+ EntityEffects + TimeEffects"
+)
+
+mod_ext = PanelOLS.from_formula(formula_ext, data=df)
+res_ext = mod_ext.fit(cov_type="clustered", cluster_entity=True)
+print(res_ext.summary)
+
+
+from linearmodels.panel import PanelOLS
+
+# Sicherstellen, dass Panelstruktur bereits passt
+df = df.copy()
+
+# Daten für Männer (sex=1)
+df_male = df[df['sex'] == 1]
+
+# Daten für Frauen (sex=2)
+df_female = df[df['sex'] == 2]
+
+# Formel für das Modell
+formula = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) + EntityEffects + TimeEffects"
+
+# Modell für Männer
+model_male = PanelOLS.from_formula(formula, data=df_male)
+result_male = model_male.fit(cov_type="clustered", cluster_entity=True)
+
+# Modell für Frauen
+model_female = PanelOLS.from_formula(formula, data=df_female)
+result_female = model_female.fit(cov_type="clustered", cluster_entity=True)
+
+# Ergebnisse ausgeben
+print("\n--- Ergebnisse: Männer ---\n")
+print(result_male.summary)
+
+print("\n--- Ergebnisse: Frauen ---\n")
+print(result_female.summary)
+
+
+trend = df.reset_index().groupby("syear")[["pgautono","plh0173"]].mean()
+
+plt.plot(trend.index, trend["pgautono"], marker="o", label="Autonomy (0–5)")
+plt.plot(trend.index, trend["plh0173"], marker="o", label="Job satisfaction (0–10)")
+plt.title("Yearly Means: Autonomy & Job Satisfaction")
+plt.xlabel("Year")
+plt.ylabel("Mean")
+plt.legend(); plt.grid(axis="y", linestyle="--", alpha=0.6); plt.show()
+
+
+g = (
+    df.reset_index()
+      .groupby(["syear","female"]).size()
+      .groupby(level=0).apply(lambda s: s/s.sum()*100)
+      .unstack(fill_value=0)
+      .rename(columns={0:"Male",1:"Female"})
+)
+g.plot(kind="bar", stacked=True)
+plt.title("Gender Shares per Year (%)"); plt.xlabel("Year"); plt.ylabel("Percent")
+plt.grid(axis="y", linestyle="--", alpha=0.6); plt.show()
+
+
+
+tmp = (
+    df.reset_index()
+      .dropna(subset=["temp_contract"])
+      .groupby(["syear","temp_contract"]).size()
+      .groupby(level=0).apply(lambda s: s/s.sum()*100)
+      .unstack(fill_value=0)
+      .rename(columns={0:"Permanent",1:"Temporary"})
+)
+tmp.plot(kind="bar", stacked=True)
+plt.title("Contract Types per Year (%)"); plt.xlabel("Year"); plt.ylabel("Percent")
+plt.grid(axis="y", linestyle="--", alpha=0.6); plt.show()
+
+
+# --- Coefficient Plot: Autonomy effect on Job vs Life satisfaction ---
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+from linearmodels.panel import PanelOLS
+
+# 1) Daten laden (Parquet-Pfad anpassen)
+PARQUET_PATH = Path(r"C:/Users/Art/Desktop/Masterarbeit/data/processed/cleaned_panel.parquet")
+df = pd.read_parquet(PARQUET_PATH)
+
+# 2) Panelindex
+df = df.set_index(["pid","syear"]).sort_index()
+
+# 3) Formeln (Job, Life)
+f_job  = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) + EntityEffects + TimeEffects"
+f_life = f_job.replace("plh0173","plh0182")
+
+# 4) Schätzen (clustered SE auf Entity)
+res_job  = PanelOLS.from_formula(f_job,  data=df).fit(cov_type="clustered", cluster_entity=True)
+res_life = PanelOLS.from_formula(f_life, data=df).fit(cov_type="clustered", cluster_entity=True)
+
+# 5) Autonomy-Koeffizienten einsammeln
+def grab_autonomy(res, label):
+    b  = res.params.loc["pgautono"]
+    se = res.std_errors.loc["pgautono"]
+    lo, hi = res.conf_int().loc["pgautono"].tolist()
+    return {"model": label, "beta": b, "se": se, "lo": lo, "hi": hi}
+
+rows = [
+    grab_autonomy(res_job,  "Job satisfaction"),
+    grab_autonomy(res_life, "Life satisfaction")
+]
+coef = pd.DataFrame(rows)
+
+# 6) Plot (horizontaler Fehlerbalken)
+plt.figure(figsize=(7,3.6))
+y = np.arange(len(coef))
+plt.errorbar(coef["beta"], y, xerr=[coef["beta"]-coef["lo"], coef["hi"]-coef["beta"]],
+             fmt="o", capsize=4)
+plt.axvline(0, linestyle="--", alpha=0.6)
+plt.yticks(y, coef["model"])
+plt.xlabel("Estimated effect of autonomy (β) with 95% CI")
+plt.title("Autonomy effect: Job vs. Life satisfaction")
+plt.grid(axis="x", linestyle="--", alpha=0.4)
+plt.tight_layout()
+plt.show()
+
+print(coef)
+
+
+# --- Coefficient Plot: Autonomy effect by gender (Job satisfaction only) ---
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+from linearmodels.panel import PanelOLS
+
+# 1) Daten laden
+PARQUET_PATH = Path(r"C:/Users/Art/Desktop/Masterarbeit/data/processed/cleaned_panel.parquet")
+df = pd.read_parquet(PARQUET_PATH)
+
+# 2) Panelindex
+df = df.set_index(["pid","syear"]).sort_index()
+
+# 3) Subsamples
+df_m = df[df["sex"] == 1]  # male
+df_f = df[df["sex"] == 2]  # female
+
+# 4) Formel (Jobzufriedenheit)
+formula = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) + EntityEffects + TimeEffects"
+
+# 5) Schätzen
+res_m = PanelOLS.from_formula(formula, data=df_m).fit(cov_type="clustered", cluster_entity=True)
+res_f = PanelOLS.from_formula(formula, data=df_f).fit(cov_type="clustered", cluster_entity=True)
+
+# 6) Autonomy-Koeffizient extrahieren
+def grab(res, label):
+    b  = res.params.loc["pgautono"]
+    se = res.std_errors.loc["pgautono"]
+    lo, hi = res.conf_int().loc["pgautono"].tolist()
+    return {"group": label, "beta": b, "lo": lo, "hi": hi}
+
+coef = pd.DataFrame([grab(res_m,"Men"), grab(res_f,"Women")])
+
+# 7) Plot
+plt.figure(figsize=(6.5,3.6))
+y = np.arange(len(coef))
+plt.errorbar(coef["beta"], y, xerr=[coef["beta"]-coef["lo"], coef["hi"]-coef["beta"]],
+             fmt="o", capsize=4)
+plt.axvline(0, linestyle="--", alpha=0.6)
+plt.yticks(y, coef["group"])
+plt.xlabel("Estimated effect of autonomy on job satisfaction (β) with 95% CI")
+plt.title("Autonomy effect by gender")
+plt.grid(axis="x", linestyle="--", alpha=0.4)
+plt.tight_layout()
+plt.show()
+
+print(coef)
+
+
+# --- Marginal Effect Plot for autonomy (Job satisfaction) ---
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+from linearmodels.panel import PanelOLS
+
+# 1) Daten laden
+PARQUET_PATH = Path(r"C:/Users/Art/Desktop/Masterarbeit/data/processed/cleaned_panel.parquet")
+df = pd.read_parquet(PARQUET_PATH)
+
+# 2) Panelindex
+df = df.set_index(["pid","syear"]).sort_index()
+
+# 3) Basismodell (Jobzufriedenheit)
+formula = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) + EntityEffects + TimeEffects"
+res = PanelOLS.from_formula(formula, data=df).fit(cov_type="clustered", cluster_entity=True)
+
+# 4) β und SE für Autonomie
+beta = res.params["pgautono"]
+se   = res.std_errors["pgautono"]
+
+# 5) Autonomie-Achse (0..5); Darstellung als Veränderung ggü. Mittelwert
+x = np.linspace(0, 5, 61)
+x_centered = x - x.mean()            # zentriert, um "Δ" (relative Änderung) zu zeigen
+y = beta * x_centered
+y_lo = (beta - 1.96*se) * x_centered
+y_hi = (beta + 1.96*se) * x_centered
+
+# 6) Plot
+plt.figure(figsize=(7,4))
+plt.plot(x, y, label="Predicted Δ Job satisfaction")
+plt.fill_between(x, y_lo, y_hi, alpha=0.2, label="95% CI")
+plt.axhline(0, linestyle="--", alpha=0.6, linewidth=1)
+plt.xlabel("Job autonomy (0–5)")
+plt.ylabel("Δ Job satisfaction (relative to mean autonomy)")
+plt.title("Marginal effect of autonomy (linear FE model)")
+plt.legend()
+plt.grid(axis="y", linestyle="--", alpha=0.4)
+plt.tight_layout()
+plt.show()
+
+print(f"Beta_autonomy = {beta:.4f} (SE {se:.4f})  → Δ from 0 to 5 ≈ {beta*5:.3f} points")
+
+
