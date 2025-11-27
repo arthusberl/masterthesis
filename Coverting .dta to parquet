@@ -1,0 +1,35 @@
+import pyreadstat
+import pandas as pd
+from pathlib import Path
+
+RAW = Path("C:/Users/Art/Desktop/Masterarbeit/data/dataoriginal")
+OUT = Path("C:/Users/Art/Desktop/Masterarbeit/data/parquet"); OUT.mkdir(exist_ok=True)
+
+
+usecols_biobirth = ["pid","sex",           # Keys
+               ]
+
+
+usecols_pgen = ["pid","syear","pgautono","pgbetr",          # Keys
+                # Outcomes
+                # "jobsat_var", "lifesat_var",
+                # Main IV
+                # "autonomy_var",
+                # Controls
+                # "income_var","hours_var","health_var","firm_size_var","temp_contract_var","lead_var"
+               ]
+
+usecols_pl   = ["pid","syear","plh0173","plh0182","plc0013_h","plb0186_h","plh0171", "plb0037_h","plb0067"           # Keys
+                # ggf. ergänzende Kontrollen aus pl.*
+               ]
+
+def dta_to_parquet(path, out, usecols=None):
+    df, meta = pyreadstat.read_dta(path, usecols=usecols, apply_value_formats=False)
+    df.columns = [str(c).strip().lower().replace(" ","_") for c in df.columns]
+    df.to_parquet(out, index=False)
+    return df.shape
+
+shape_biobirth = dta_to_parquet(RAW/"biobirth.dta", OUT/"biobirth.parquet", usecols=usecols_biobirth or None)
+shape_pgen = dta_to_parquet(RAW/"pgen.dta", OUT/"pgen.parquet", usecols=usecols_pgen or None)
+shape_pl   = dta_to_parquet(RAW/"pl.dta",   OUT/"pl.parquet",   usecols=usecols_pl   or None)
+print("biobirth:", shape_biobirth, "pgen:", shape_pgen, "pl:", shape_pl)
