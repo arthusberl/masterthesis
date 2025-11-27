@@ -1,0 +1,202 @@
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+# --- Pfade/Settings ---
+BASE = Path("C:/Users/Art/Desktop/Masterarbeit/data")
+PARQ = BASE / "parquet"
+PROC = BASE / "processed"
+PROC.mkdir(parents=True, exist_ok=True)
+
+YEARS = list(range(2013, 2020))  # 2013–2019 inkl.
+N_YEARS = len(YEARS)
+MIN_YEARS_REQUIRED = N_YEARS - 3  # max. 3 fehlend -> mind. 4 valide Jahre
+
+# Variablen
+PGEN_VARS = ["pid","syear","pgautono","pgbetr"]
+PL_VARS   = ["pid","syear","plh0173","plh0182","plc0013_h","plb0186_h","plh0171","plb0037_h","plb0067"]
+BIO_VARS  = ["pid","sex"]
+
+# --- 1) Laden ---
+pgen = pd.read_parquet(PARQ / "pgen.parquet", columns=PGEN_VARS)
+pl   = pd.read_parquet(PARQ / "pl.parquet",   columns=PL_VARS)
+bio  = pd.read_parquet(PARQ / "biobirth.parquet", columns=BIO_VARS)
+
+# --- 2) Jahre filtern & Deduplizieren ---
+pgen = pgen[pgen["syear"].isin(YEARS)].copy().sort_values(["pid","syear"]).drop_duplicates(["pid","syear"])
+pl   = pl[pl["syear"].isin(YEARS)].copy().sort_values(["pid","syear"]).drop_duplicates(["pid","syear"])
+
+# --- 3) Nur Personen mit valider Geschlechtsangabe (1=male, 2=female) ---
+bio = bio.copy()
+# alles außer {1,2} -> NaN
+bio.loc[~bio["sex"].isin([1, 2]), "sex"] = np.nan
+pid_with_sex = set(bio.loc[bio["sex"].notna(), "pid"].unique())
+
+# PIDs, die in beiden Quellen sind und sex haben
+pid_in_pgen = set(pgen["pid"].unique())
+pid_in_pl   = set(pl["pid"].unique())
+pid_keep_initial = (pid_in_pgen & pid_in_pl) & pid_with_sex
+
+pgen = pgen[pgen["pid"].isin(pid_keep_initial)].copy()
+pl   = pl[pl["pid"].isin(pid_keep_initial)].copy()
+bio  = bio[bio["pid"].isin(pid_keep_initial)].copy()
+
+# --- 4) Merge pgen ⟂ pl (inner), dann bio (left) ---
+df = pgen.merge(pl, on=["pid","syear"], how="inner", suffixes=("","_pl"))
+df = df.merge(bio, on="pid", how="left")
+
+# --- 5) Wertebereiche & Irrelevantes -> NaN (deine Regeln) ---
+
+# Hilfsfunktion: Setze Werte außerhalb erlaubter Range/Set auf NaN
+def keep_in_range(series, lo=None, hi=None, allowed_set=None):
+    s = pd.to_numeric(series, errors="coerce")
+    if allowed_set is not None:
+        mask = s.isin(allowed_set)
+    else:
+        mask = pd.Series(True, index=s.index)
+        if lo is not None: mask &= (s >= lo)
+        if hi is not None: mask &= (s <= hi)
+    s = s.where(mask, np.nan)
+    return s
+
+# pgautono: 0..5 (0=Apprentice, 5=high autonomy)
+df["pgautono"] = keep_in_range(df["pgautono"], lo=0, hi=5)
+
+# plh0173 (Job satisfaction): 0..10
+df["plh0173"] = keep_in_range(df["plh0173"], lo=0, hi=10)
+
+# plh0182 (Life satisfaction): 0..10
+df["plh0182"] = keep_in_range(df["plh0182"], lo=0, hi=10)
+
+# plc0013_h (income): numerisch; "keine Angabe" -> NaN (alles Nicht-Numerische/negativ als NaN)
+df["plc0013_h"] = pd.to_numeric(df["plc0013_h"], errors="coerce")
+df.loc[df["plc0013_h"] < 0, "plc0013_h"] = np.nan  # falls SOEP-Missings negativ kodiert sind
+
+# plb0186_h (hours): numerisch; "keine Angabe" -> NaN
+df["plb0186_h"] = pd.to_numeric(df["plb0186_h"], errors="coerce")
+df.loc[df["plb0186_h"] < 0, "plb0186_h"] = np.nan
+
+# plh0171 (Health): 0..10 (0=unhappy, 10=happy)
+df["plh0171"] = keep_in_range(df["plh0171"], lo=0, hi=10)
+
+# pgbetr (Firmengröße): nur 0..10 relevant, 11/12 -> NaN
+df["pgbetr"] = keep_in_range(df["pgbetr"], lo=0, hi=10)
+if "pgbetr" in df.columns:
+    df["pgbetr"] = df["pgbetr"].astype("float32").astype("Int64")  # kategorisch numerisch
+
+# plb0037_h (Contract): nur {1=permanent, 2=temporary} relevant
+df["plb0037_h"] = keep_in_range(df["plb0037_h"], allowed_set={1, 2})
+
+# plb0067 (Leadership): nur {1=yes, 2=no} relevant
+df["plb0067"] = keep_in_range(df["plb0067"], allowed_set={1, 2})
+
+# sex (1=male, 2=female) – alles andere bereits vorher entfernt
+df["sex"] = keep_in_range(df["sex"], allowed_set={1, 2})
+
+# --- 6) Kern-Regel (≥4 valide Jahre) ---
+core_vars = ["plh0173","plh0182","pgautono","plc0013_h","plb0186_h","plh0171"]
+
+# Jahr gilt als "valide Kern-Beobachtung", wenn alle Kernvariablen vorhanden
+core_mask = df[core_vars].notna().all(axis=1)
+core_years_per_pid = df.loc[core_mask].groupby("pid")["syear"].nunique()
+pid_core_ok = set(core_years_per_pid[core_years_per_pid >= MIN_YEARS_REQUIRED].index)
+
+# Finaler PID-Filter
+df = df[df["pid"].isin(pid_core_ok)].copy()
+
+# Für die Modellsamples: Zeilen, in denen Kernvariablen vollständig sind
+df = df[df[core_vars].notna().all(axis=1)].copy()
+
+# --- 7) Typisierung & Missing-Indicatoren für Nicht-Kern-Kontrollen ---
+# Skalen & Typen
+df["plh0173"] = df["plh0173"].astype("float32")
+df["plh0182"] = df["plh0182"].astype("float32")
+df["pgautono"] = df["pgautono"].astype("float32")
+df["plc0013_h"] = df["plc0013_h"].astype("float32")
+df["plb0186_h"] = df["plb0186_h"].astype("float32")
+df["plh0171"] = df["plh0171"].astype("float32")
+
+# optional: normalisierte Autonomie 0–1
+df["pgautono_norm01"] = (df["pgautono"] - df["pgautono"].min()) / (df["pgautono"].max() - df["pgautono"].min())
+
+# Contract (temp_contract): 1=temporary (2), 0=permanent (1), Missing-Indicator
+df["temp_contract_raw"] = df["plb0037_h"]
+df["temp_contract_miss"] = df["temp_contract_raw"].isna().astype("float32")
+df["temp_contract"] = np.where(df["temp_contract_raw"] == 2, 1.0,
+                        np.where(df["temp_contract_raw"] == 1, 0.0, np.nan)).astype("float32")
+df["temp_contract"] = df["temp_contract"].fillna(0.0).astype("float32")
+
+# Leadership (lead): 1=yes (1), 0=no (2), Missing-Indicator
+df["lead_raw"] = df["plb0067"]
+df["lead_miss"] = df["lead_raw"].isna().astype("float32")
+df["lead"] = np.where(df["lead_raw"] == 1, 1.0,
+               np.where(df["lead_raw"] == 2, 0.0, np.nan)).astype("float32")
+df["lead"] = df["lead"].fillna(0.0).astype("float32")
+
+# Firmengröße als Kategorie (fehlend bleibt fehlend – kein harter Zwang)
+if "pgbetr" in df.columns:
+    df["pgbetr_cat"] = df["pgbetr"].astype("category")
+
+# Female-Dummy (1=female)
+df["female"] = (df["sex"] == 2).astype("float32")
+
+# --- 8) Final aufräumen & Checks ---
+df = df.sort_values(["pid","syear"]).drop_duplicates(["pid","syear"], keep="first")
+
+print("Form nach Kern-Regel & Cleaning:", df.shape)
+print("Anzahl PIDs:", df["pid"].nunique(), "– Jahre:", df["syear"].nunique(), f"({YEARS[0]}–{YEARS[-1]})")
+print("Verteilung gültiger Kern-Jahre pro PID:")
+print(df.groupby("pid")["syear"].nunique().value_counts().sort_index())
+
+# Variation in Autonomie
+var_share = (df.groupby("pid")["pgautono"].nunique() > 1).mean()
+print(f"Anteil Personen mit Variation in pgautono über die Zeit: {var_share:.2%}")
+
+# --- 9) Speichern ---
+out_path = PROC / "panel_coremin4yrs_clean_domains_2013_2019.parquet"
+df.to_parquet(out_path, index=False)
+print("Gespeichert:", out_path)
+
+
+
+
+import pandas as pd
+
+# --- 0) Setup: Kernvariablen definieren ---
+core = ["plh0173","plh0182","pgautono","plc0013_h","plb0186_h","plh0171"]
+
+print("=== PANEL SANITY CHECKS (ESSENTIAL) ===")
+
+# 1) Eindeutiger Key (1 Zeile pro Person×Jahr)
+dups = df.duplicated(subset=["pid","syear"]).sum()
+print(f"[1] Duplicates pid×syear: {dups}")
+
+# 2) Panel-Deckung (≥2 Jahre pro Person)
+years_per_pid = df.groupby("pid")["syear"].nunique()
+share_ge2 = (years_per_pid >= 2).mean()
+print(f"[2] Share of persons with ≥2 years: {share_ge2:.2%}")
+print("    Years/person distribution:\n", years_per_pid.value_counts().sort_index().to_string())
+
+# 3) Within-Variation (DV & Haupt-IV)
+share_aut = (df.groupby("pid")["pgautono"].nunique() > 1).mean()
+share_js  = (df.groupby("pid")["plh0173"].nunique() > 1).mean()
+print(f"[3] Within-variation – Autonomy: {share_aut:.2%} | Job satisfaction: {share_js:.2%}")
+
+# 4) Missingness (Kernvariablen)
+miss = (df[core].isna().mean()*100).round(2).sort_values(ascending=False)
+print("[4] Missingness in core variables (%):\n", miss.to_string())
+
+# 5) Plausibilitäten/Ausreißer – Income & Hours
+for c in ["plc0013_h","plb0186_h"]:
+    desc = df[c].describe(percentiles=[.01,.05,.95,.99]).round(2)
+    print(f"[5] {c} – percentiles & summary:\n{desc.to_string()}")
+
+# 6) Schnelle Trends & Abdeckung pro Jahr
+yr_means = df.groupby("syear")[["pgautono","plh0173"]].mean().round(2)
+yr_n = df.groupby("syear")["pid"].nunique()
+print("[6] Yearly means (Autonomy, JobSat):\n", yr_means.to_string())
+print("[6] Persons per year:\n", yr_n.to_string())
+print("=== END CHECKS ===")
+
+
+
