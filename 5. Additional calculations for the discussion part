@@ -1,0 +1,149 @@
+# --- Coefficient Plot: Autonomy effect on Job vs Life satisfaction ---
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+from linearmodels.panel import PanelOLS
+
+# 1) Daten laden (Parquet-Pfad anpassen)
+PARQUET_PATH = Path(r"C:/Users/Art/Desktop/Masterarbeit/data/processed/cleaned_panel.parquet")
+df = pd.read_parquet(PARQUET_PATH)
+
+# 2) Panelindex
+df = df.set_index(["pid","syear"]).sort_index()
+
+# 3) Formeln (Job, Life)
+f_job  = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) + EntityEffects + TimeEffects"
+f_life = f_job.replace("plh0173","plh0182")
+
+# 4) Schätzen (clustered SE auf Entity)
+res_job  = PanelOLS.from_formula(f_job,  data=df).fit(cov_type="clustered", cluster_entity=True)
+res_life = PanelOLS.from_formula(f_life, data=df).fit(cov_type="clustered", cluster_entity=True)
+
+# 5) Autonomy-Koeffizienten einsammeln
+def grab_autonomy(res, label):
+    b  = res.params.loc["pgautono"]
+    se = res.std_errors.loc["pgautono"]
+    lo, hi = res.conf_int().loc["pgautono"].tolist()
+    return {"model": label, "beta": b, "se": se, "lo": lo, "hi": hi}
+
+rows = [
+    grab_autonomy(res_job,  "Job satisfaction"),
+    grab_autonomy(res_life, "Life satisfaction")
+]
+coef = pd.DataFrame(rows)
+
+# 6) Plot (horizontaler Fehlerbalken)
+plt.figure(figsize=(7,3.6))
+y = np.arange(len(coef))
+plt.errorbar(coef["beta"], y, xerr=[coef["beta"]-coef["lo"], coef["hi"]-coef["beta"]],
+             fmt="o", capsize=4)
+plt.axvline(0, linestyle="--", alpha=0.6)
+plt.yticks(y, coef["model"])
+plt.xlabel("Estimated effect of autonomy (β) with 95% CI")
+plt.title("Autonomy effect: Job vs. Life satisfaction")
+plt.grid(axis="x", linestyle="--", alpha=0.4)
+plt.tight_layout()
+plt.show()
+
+print(coef)
+
+
+# --- Coefficient Plot: Autonomy effect by gender (Job satisfaction only) ---
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+from linearmodels.panel import PanelOLS
+
+# 1) Daten laden
+PARQUET_PATH = Path(r"C:/Users/Art/Desktop/Masterarbeit/data/processed/cleaned_panel.parquet")
+df = pd.read_parquet(PARQUET_PATH)
+
+# 2) Panelindex
+df = df.set_index(["pid","syear"]).sort_index()
+
+# 3) Subsamples
+df_m = df[df["sex"] == 1]  # male
+df_f = df[df["sex"] == 2]  # female
+
+# 4) Formel (Jobzufriedenheit)
+formula = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) + EntityEffects + TimeEffects"
+
+# 5) Schätzen
+res_m = PanelOLS.from_formula(formula, data=df_m).fit(cov_type="clustered", cluster_entity=True)
+res_f = PanelOLS.from_formula(formula, data=df_f).fit(cov_type="clustered", cluster_entity=True)
+
+# 6) Autonomy-Koeffizient extrahieren
+def grab(res, label):
+    b  = res.params.loc["pgautono"]
+    se = res.std_errors.loc["pgautono"]
+    lo, hi = res.conf_int().loc["pgautono"].tolist()
+    return {"group": label, "beta": b, "lo": lo, "hi": hi}
+
+coef = pd.DataFrame([grab(res_m,"Men"), grab(res_f,"Women")])
+
+# 7) Plot
+plt.figure(figsize=(6.5,3.6))
+y = np.arange(len(coef))
+plt.errorbar(coef["beta"], y, xerr=[coef["beta"]-coef["lo"], coef["hi"]-coef["beta"]],
+             fmt="o", capsize=4)
+plt.axvline(0, linestyle="--", alpha=0.6)
+plt.yticks(y, coef["group"])
+plt.xlabel("Estimated effect of autonomy on job satisfaction (β) with 95% CI")
+plt.title("Autonomy effect by gender")
+plt.grid(axis="x", linestyle="--", alpha=0.4)
+plt.tight_layout()
+plt.show()
+
+print(coef)
+
+
+# --- Marginal Effect Plot for autonomy (Job satisfaction) ---
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+from linearmodels.panel import PanelOLS
+
+# 1) Daten laden
+PARQUET_PATH = Path(r"C:/Users/Art/Desktop/Masterarbeit/data/processed/cleaned_panel.parquet")
+df = pd.read_parquet(PARQUET_PATH)
+
+# 2) Panelindex
+df = df.set_index(["pid","syear"]).sort_index()
+
+# 3) Basismodell (Jobzufriedenheit)
+formula = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) + EntityEffects + TimeEffects"
+res = PanelOLS.from_formula(formula, data=df).fit(cov_type="clustered", cluster_entity=True)
+
+# 4) β und SE für Autonomie
+beta = res.params["pgautono"]
+se   = res.std_errors["pgautono"]
+
+# 5) Autonomie-Achse (0..5); Darstellung als Veränderung ggü. Mittelwert
+x = np.linspace(0, 5, 61)
+x_centered = x - x.mean()            # zentriert, um "Δ" (relative Änderung) zu zeigen
+y = beta * x_centered
+y_lo = (beta - 1.96*se) * x_centered
+y_hi = (beta + 1.96*se) * x_centered
+
+# 6) Plot
+plt.figure(figsize=(7,4))
+plt.plot(x, y, label="Predicted Δ Job satisfaction")
+plt.fill_between(x, y_lo, y_hi, alpha=0.2, label="95% CI")
+plt.axhline(0, linestyle="--", alpha=0.6, linewidth=1)
+plt.xlabel("Job autonomy (0–5)")
+plt.ylabel("Δ Job satisfaction (relative to mean autonomy)")
+plt.title("Marginal effect of autonomy (linear FE model)")
+plt.legend()
+plt.grid(axis="y", linestyle="--", alpha=0.4)
+plt.tight_layout()
+plt.show()
+
+print(f"Beta_autonomy = {beta:.4f} (SE {se:.4f})  → Δ from 0 to 5 ≈ {beta*5:.3f} points")
+
+
+
+
+
