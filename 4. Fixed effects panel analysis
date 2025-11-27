@@ -1,0 +1,121 @@
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from linearmodels.panel import PanelOLS
+
+# Pfade & Laden
+PROC = Path("C:/Users/Art/Desktop/Masterarbeit/data/processed")
+df = pd.read_parquet(PROC / "cleaned_panel.parquet")
+
+# Grundchecks (knapp)
+print(df.shape, df.columns.tolist()[:12])
+print(df[["pid","syear"]].drop_duplicates().shape)
+
+# Panelindex setzen
+df = df.set_index(["pid","syear"]).sort_index()
+
+
+# Baseline-Kontrollen: Einkommen, Stunden, Gesundheit
+formula_base = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + EntityEffects + TimeEffects"
+
+mod_base = PanelOLS.from_formula(formula_base, data=df)
+res_base = mod_base.fit(cov_type="clustered", cluster_entity=True)
+
+print(res_base.summary)
+
+
+# Firmengröße als kategoriale Regressoren
+# (linearmodels-Formel: C(pgbetr) erzeugt Dummies; fehlende bleiben außen vor)
+formula_ext = (
+    "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 "
+    "+ temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) "
+    "+ EntityEffects + TimeEffects"
+)
+
+mod_ext = PanelOLS.from_formula(formula_ext, data=df)
+res_ext = mod_ext.fit(cov_type="clustered", cluster_entity=True)
+print(res_ext.summary)
+
+
+
+# Firmengröße als kategoriale Regressoren
+# (linearmodels-Formel: C(pgbetr) erzeugt Dummies; fehlende bleiben außen vor)
+formula_ext = (
+    "plh0182 ~ pgautono + plc0013_h + plb0186_h + plh0171 "
+    "+ temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) "
+    "+ EntityEffects + TimeEffects"
+)
+
+mod_ext = PanelOLS.from_formula(formula_ext, data=df)
+res_ext = mod_ext.fit(cov_type="clustered", cluster_entity=True)
+print(res_ext.summary)
+
+
+
+from linearmodels.panel import PanelOLS
+
+# Sicherstellen, dass Panelstruktur bereits passt
+df = df.copy()
+
+# Daten für Männer (sex=1)
+df_male = df[df['sex'] == 1]
+
+# Daten für Frauen (sex=2)
+df_female = df[df['sex'] == 2]
+
+# Formel für das Modell
+formula = "plh0173 ~ pgautono + plc0013_h + plb0186_h + plh0171 + temp_contract + temp_contract_miss + lead + lead_miss + C(pgbetr) + EntityEffects + TimeEffects"
+
+# Modell für Männer
+model_male = PanelOLS.from_formula(formula, data=df_male)
+result_male = model_male.fit(cov_type="clustered", cluster_entity=True)
+
+# Modell für Frauen
+model_female = PanelOLS.from_formula(formula, data=df_female)
+result_female = model_female.fit(cov_type="clustered", cluster_entity=True)
+
+# Ergebnisse ausgeben
+print("\n--- Ergebnisse: Männer ---\n")
+print(result_male.summary)
+
+print("\n--- Ergebnisse: Frauen ---\n")
+print(result_female.summary)
+
+
+trend = df.reset_index().groupby("syear")[["pgautono","plh0173"]].mean()
+
+plt.plot(trend.index, trend["pgautono"], marker="o", label="Autonomy (0–5)")
+plt.plot(trend.index, trend["plh0173"], marker="o", label="Job satisfaction (0–10)")
+plt.title("Yearly Means: Autonomy & Job Satisfaction")
+plt.xlabel("Year")
+plt.ylabel("Mean")
+plt.legend(); plt.grid(axis="y", linestyle="--", alpha=0.6); plt.show()
+
+
+
+g = (
+    df.reset_index()
+      .groupby(["syear","female"]).size()
+      .groupby(level=0).apply(lambda s: s/s.sum()*100)
+      .unstack(fill_value=0)
+      .rename(columns={0:"Male",1:"Female"})
+)
+g.plot(kind="bar", stacked=True)
+plt.title("Gender Shares per Year (%)"); plt.xlabel("Year"); plt.ylabel("Percent")
+plt.grid(axis="y", linestyle="--", alpha=0.6); plt.show()
+
+
+
+tmp = (
+    df.reset_index()
+      .dropna(subset=["temp_contract"])
+      .groupby(["syear","temp_contract"]).size()
+      .groupby(level=0).apply(lambda s: s/s.sum()*100)
+      .unstack(fill_value=0)
+      .rename(columns={0:"Permanent",1:"Temporary"})
+)
+tmp.plot(kind="bar", stacked=True)
+plt.title("Contract Types per Year (%)"); plt.xlabel("Year"); plt.ylabel("Percent")
+plt.grid(axis="y", linestyle="--", alpha=0.6); plt.show()
+
