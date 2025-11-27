@@ -1,0 +1,93 @@
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# -------------------------
+# 1. Linienplot: Job Satisfaction & Autonomy über die Jahre
+# -------------------------
+trend = df.groupby("syear")[["plh0173", "pgautono"]].mean()
+
+plt.figure(figsize=(8,5))
+plt.plot(trend.index, trend["plh0173"], marker="o", label="Job Satisfaction (0–10)")
+plt.plot(trend.index, trend["pgautono"], marker="o", label="Job Autonomy (0–5)")
+plt.title("Average Job Satisfaction and Autonomy per Year")
+plt.xlabel("Year")
+plt.ylabel("Mean Value")
+plt.legend()
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+# -------------------------
+# 2. Balkendiagramm: Anteil Frauen/Männer pro Jahr
+# -------------------------
+gender_dist = (
+    df.groupby(["syear", "female"]).size()
+    .groupby(level=0)
+    .apply(lambda x: x / x.sum() * 100)
+    .unstack(fill_value=0)
+)
+
+gender_dist.plot(kind="bar", stacked=True, figsize=(8,5), color=["#1f77b4", "#ff7f0e"])
+plt.title("Gender Distribution per Year (%)")
+plt.xlabel("Year")
+plt.ylabel("Percentage")
+plt.legend(["Male (0)", "Female (1)"])
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+# -------------------------
+# 3. Stacked Bars: Temporäre vs. permanente Verträge pro Jahr
+# -------------------------
+temp_dist = (
+    df[df["temp_contract"].notna()]
+    .groupby(["syear", "temp_contract"]).size()
+    .groupby(level=0)
+    .apply(lambda x: x / x.sum() * 100)
+    .unstack(fill_value=0)
+)
+
+temp_dist.plot(kind="bar", stacked=True, figsize=(8,5), color=["#2ca02c", "#d62728"])
+plt.title("Contract Types per Year (%)")
+plt.xlabel("Year")
+plt.ylabel("Percentage")
+plt.legend(["Permanent (0)", "Temporary (1)"])
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+
+# -------------------------
+# 4. Korrelationsmatrix: Kernvariablen
+# -------------------------
+corr_vars = ["plh0173", "plh0182", "pgautono", "plc0013_h", "plb0186_h", "plh0171"]
+corr = df[corr_vars].corr().round(2)
+print("\nCorrelation matrix:\n", corr)
+
+# -------------------------
+# 5. Mittelwerte nach Geschlecht
+# -------------------------
+gender_means = df.groupby(["syear", "female"])[["plh0173", "pgautono"]].mean().round(2)
+print("\nMean Job Satisfaction and Autonomy by Gender per Year:\n", gender_means)
+
+# -------------------------
+# 6. Boxplots für Einkommen und Arbeitsstunden
+# -------------------------
+plt.figure(figsize=(10,5))
+df.boxplot(column="plc0013_h", by="syear")
+plt.title("Gross Monthly Income by Year")
+plt.suptitle("")
+plt.ylabel("EUR")
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+plt.figure(figsize=(10,5))
+df.boxplot(column="plb0186_h", by="syear")
+plt.title("Weekly Working Hours by Year")
+plt.suptitle("")
+plt.ylabel("Hours")
+plt.grid(axis="y", linestyle="--", alpha=0.7)
+plt.show()
+
+
+
+
+
+
