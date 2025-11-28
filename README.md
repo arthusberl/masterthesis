@@ -99,3 +99,24 @@ https://docs.python.org/3/library/pathlib.html
 
 Part 5: Additional calculations for the discussion part
 
+Ke, S., & contributors to linearmodels. (2025). linearmodels documentation: PanelOLS (formula interface, EntityEffects/TimeEffects, clustered covariance, params/std_errors/conf_int). 
+https://bashtage.github.io/linearmodels/panel/model.html
+
+
+pandas development team. (2025). pandas: IO tools — Parquet (read_parquet); Indexing (set_index); GroupBy (groupby/mean); DataFrame construction (User Guide). 
+https://pandas.pydata.org/docs/user_guide/io.html#parquet
+https://pandas.pydata.org/docs/user_guide/indexing.html
+https://pandas.pydata.org/docs/user_guide/groupby.html
+https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.html
+
+
+NumPy developers. (2025). NumPy reference: numpy.linspace; ndarray operations (v1.x). 
+https://numpy.org/doc/stable/reference/generated/numpy.linspace.html
+
+
+Matplotlib Development Team. (2025). Matplotlib.pyplot API: figure, plot, errorbar, fill_between, axvline/axhline, legend, grid, ticks, labels, tight_layout, show. 
+https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.html
+
+
+Python Software Foundation. (2025). pathlib — Object-oriented filesystem paths. 
+https://docs.python.org/3/library/pathlib.html
