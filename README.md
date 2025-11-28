@@ -72,3 +72,30 @@ https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.html
 
 Part 4: Fixed effects panel analysis
 
+Ke, S., & contributors to linearmodels. (2025). linearmodels documentation: PanelOLS (formula interface, EntityEffects, TimeEffects, clustered covariance). 
+https://bashtage.github.io/linearmodels/panel/model.html
+
+
+Smith, N., Vanderplas, J., & contributors to patsy. (2025). patsy: Formula language for Python — C() categoricals & design matrices. 
+https://patsy.readthedocs.io/en/latest/formulas.html
+
+
+pandas development team. (2025). pandas: IO tools — Parquet (read_parquet); Indexing (set_index); GroupBy & reshaping (groupby, unstack, rename); Descriptive stats (mean); Plotting (DataFrame.plot). https://pandas.pydata.org/docs/user_guide/io.html#parquet
+https://pandas.pydata.org/docs/user_guide/indexing.html
+https://pandas.pydata.org/docs/user_guide/groupby.html
+https://pandas.pydata.org/docs/user_guide/reshaping.html
+https://pandas.pydata.org/docs/user_guide/visualization.html
+
+
+Matplotlib Development Team. (2025). Matplotlib.pyplot API (figure, plot, legend, grid, titles, labels, show). 
+https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.html
+
+
+Python Software Foundation. (2025). pathlib — Object-oriented filesystem paths. 
+https://docs.python.org/3/library/pathlib.html
+
+
+
+
+Part 5: Additional calculations for the discussion part
+
