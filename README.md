@@ -1,7 +1,8 @@
 # masterthesis
 This repository will include my master thesis work with some Python code (done with Anaconda and written Jupyter Notebook) and data analysis. The code is a bit of a mixed bag from very different sources, so it's not clean or advanced, but does the job.
 
-Please find the citatrions/references here.
+
+Please find the references here.
 
 Part 1: Converting .dta to parquet
 
@@ -16,4 +17,26 @@ Apache Software Foundation. (2025). Apache Parquet format: Specification & docs.
 
 
 Part 2: Preparing the analysis
+
+pandas development team. (2025). pandas: IO tools — Parquet (read_parquet / to_parquet). https://pandas.pydata.org/docs/user_guide/io.html#parquet
+
+pandas development team. (2025). pandas: GroupBy — split–apply–combine; duplicates; missing data; categoricals (User Guide). https://pandas.pydata.org/docs/user_guide/groupby.html
+
+; https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.drop_duplicates.html
+ ; https://pandas.pydata.org/docs/user_guide/missing_data.html
+ ; https://pandas.pydata.org/docs/user_guide/categorical.html
+
+NumPy developers. (2025). NumPy reference: ndarray, NaN, and where (v1.x). https://numpy.org/doc/stable/reference/generated/numpy.where.html
+
+; https://numpy.org/doc/stable/reference/constants.html#numpy.nan
+
+Python Software Foundation. (2025). pathlib — Object-oriented filesystem paths (Python standard library). https://docs.python.org/3/library/pathlib.html
+
+Apache Software Foundation. (2025). Apache Parquet: Format & specification. https://parquet.apache.org/docs/
+
+The Apache Arrow Project. (2025). PyArrow: Parquet files in Python (engine used by pandas). https://arrow.apache.org/docs/python/parquet.html
+
+
+
+Part 3: Descriptive analysis
 
