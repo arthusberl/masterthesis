@@ -1,7 +1,7 @@
 ## Master thesis - “The Effect of Autonomy in the Workplace on Job Satisfaction”
 
 > [!NOTE]
-> This repository covers my master thesis work with some Python code (done with Anaconda and written in Jupyter Notebook). The code is a bit of a mixed bag from very different sources, so it's not clean or advanced, but does the job.
+> This repository covers my master thesis work with some Python code (done with Anaconda and written in Jupyter Notebook). The code is a bit of a mixed bag from very different sources and underwent many iterations, so it's not clean or advanced, but does the job.
 
 
 Please find the references below.
