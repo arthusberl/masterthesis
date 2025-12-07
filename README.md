@@ -1,10 +1,12 @@
-# masterthesis
-This repository will include my master thesis work with some Python code (done with Anaconda and written Jupyter Notebook) and data analysis. The code is a bit of a mixed bag from very different sources, so it's not clean or advanced, but does the job.
+## Master thesis - “The Effect of Autonomy in the Workplace on Job Satisfaction”
+
+> [!NOTE]
+> This repository covers my master thesis work with some Python code (done with Anaconda and written in Jupyter Notebook). The code is a bit of a mixed bag from very different sources, so it's not clean or advanced, but does the job.
 
 
 Please find the references below.
 
-Part 1: Converting .dta to parquet
+### <ins> **Part 1: Converting .dta to parquet**
 
 pandas development team. (2025). pandas documentation: DataFrame.to_parquet (Version current).
 https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_parquet.html
@@ -24,7 +26,7 @@ https://parquet.apache.org/docs
 
 
 
-Part 2: Preparing the analysis
+### <ins> **Part 2: Preparing the analysis**
 
 pandas development team. (2025). pandas: IO tools — Parquet (read_parquet / to_parquet). 
 https://pandas.pydata.org/docs/user_guide/io.html#parquet
@@ -52,7 +54,7 @@ The Apache Arrow Project. (2025). PyArrow: Parquet files in Python (engine used 
 
 
 
-Part 3: Descriptive analysis
+### <ins> **Part 3: Descriptive analysis**
 
 pandas development team. (2025). pandas: Visualization (DataFrame.plot / boxplot). https://pandas.pydata.org/docs/user_guide/visualization.html
 
@@ -70,7 +72,7 @@ https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.html
 
 
 
-Part 4: Fixed effects panel analysis
+### <ins> **Part 4: Fixed effects panel analysis**
 
 Ke, S., & contributors to linearmodels. (2025). linearmodels documentation: PanelOLS (formula interface, EntityEffects, TimeEffects, clustered covariance). 
 https://bashtage.github.io/linearmodels/panel/model.html
@@ -97,7 +99,7 @@ https://docs.python.org/3/library/pathlib.html
 
 
 
-Part 5: Additional calculations for the discussion part
+### <ins> **Part 5: Additional calculations for the discussion part**
 
 Ke, S., & contributors to linearmodels. (2025). linearmodels documentation: PanelOLS (formula interface, EntityEffects/TimeEffects, clustered covariance, params/std_errors/conf_int). 
 https://bashtage.github.io/linearmodels/panel/model.html
